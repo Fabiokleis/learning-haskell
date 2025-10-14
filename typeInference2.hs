@@ -61,11 +61,79 @@ functionC x y = if (x > y) then True else False
 functionS :: (a, b) -> b
 functionS (x, y) = y
 
+-- 1
 i :: a -> a
 i x = x
 
+-- 2
 c :: a -> b -> a
 c x y = x
 
-c' :: b -> a -> b
-c' x y = x
+-- 3
+c'' :: b -> a -> b
+c'' x y = x
+
+-- 4
+c' :: a -> b -> b
+c' a b = b
+
+-- 5
+r :: [a] -> [a]
+--r a = a
+r [a] = [a]
+
+-- 6
+co :: (b -> c) -> (a -> b) -> (a -> c)
+co f g h = f (g h)
+
+-- 7
+a :: (a -> c) -> a -> a
+a f a = a
+
+-- 8
+
+a' :: (a -> b) -> a -> b
+a' f a = f a
+
+-- Type-Kwon-Do
+
+-- 1
+-- f :: Int -> String
+-- f = undefined
+
+-- g :: String -> Char
+-- g = undefined
+
+h :: Int -> Char
+h a = 'a'
+
+-- 2
+data A
+data B
+data C
+
+q :: A -> B
+q = undefined
+
+w :: B -> C
+w = undefined
+
+e :: A -> C
+e x = w (q x)
+
+-- 3
+data X
+data Y
+data Z
+
+xz :: X -> Z
+xz = undefined
+
+yz :: Y -> Z
+yz = undefined
+
+xform :: (X, Y) -> (Z, Z)
+xform a = (xz $ fst a, yz $ snd a)
+
+munge :: (x -> y) -> (y -> (w, z)) -> x -> w
+munge f h x = fst $ h (f x)
