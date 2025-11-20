@@ -60,6 +60,7 @@ updatePlayers players (Player v p1) =
 rowWin :: Board -> Player -> Bool
 rowWin (Board c h w) (Player s _) =
   length [ x | x <- [ length [ sym | sym <- row, s == sym ] | row <- c ], x == h ] > 0
+--  length [ row | row <- c, all (\x -> x == s) row ] > 0
 
 transpose :: [[a]] -> [[a]] -> [[a]]
 transpose [] acc = reverse acc
@@ -71,14 +72,20 @@ columnWin (Board c h w) p =
   rowWin (Board (transpose c []) h w) p
 
 diagonalWin :: Board -> Player -> Bool
-diagonalWin (Board c h w) (Player s _) = undefined
+diagonalWin (Board c h w) (Player s _) =
+  let
+    cIndexed = zip [1..h] c
+    dIndexed = zip [h, (h-1)..1] c
+  in
+    all (\x -> x == s) [ xs !! (i - 1) | (i, xs) <- cIndexed ] ||
+    all (\x -> x == s) [ xs !! (i - 1) | (i, xs) <- dIndexed ]
   
 hasWinner :: GameState -> Bool
 hasWinner (GameState board []) = False
 hasWinner (GameState board (p:ps))
   | rowWin board p       = True
   | columnWin board p    = True
---  | diagonalWin board p  = True
+  | diagonalWin board p  = True
   | otherwise            = hasWinner (GameState board ps)
 
 gameLoop :: GameState -> [Player] -> IO ()
@@ -116,7 +123,8 @@ gameLoop gameState (current:nexts) = do
 
 main :: IO ()
 main = do
-  let board = newBoard 3 3
+  let board = newBoard 3 3 
   let players = [Player Xp [], Player Op []] -- Player Pp []
   let gameState = GameState board players
   gameLoop gameState players
+  
