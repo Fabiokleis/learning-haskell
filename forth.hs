@@ -1,8 +1,10 @@
 module Forth where
 
+-- simple evaluator for subset forth 
+
 data Expr =
   Lit Int
-  | Sym String [Expr]
+  | Sym String -- symbol defs
   | Add
   | Sub
   | Mul
@@ -11,93 +13,167 @@ data Expr =
   | Swap
   | Over
   | Drop
+  | Dot
+  | Emit
+  | Equal
+  | Cr
+  | Lf
   deriving (Show, Eq)
 
 type Program = [Expr]
-type Row = (String, Expr)
+type Stack = [Int]
+type Row = (String, Program)
 type Table = [Row]
-data Compiler = Compiler { program :: Program, table :: Table } deriving Show
 
-upsert :: Table -> Table -> Row -> Table
-upsert [] table row = row : table 
-upsert (row:rest) table (key, value) =
-  if key == fst row then concat [(key, value) : rest, table] else upsert rest (row : table) (key, value) 
+data Evaluator = Evaluator {
+  program :: Program,
+  stack :: Stack,
+  table :: Table
+} deriving Show
 
 parseExpr :: String -> Either String Expr
 parseExpr "+" = Right Add 
 parseExpr "-" = Right Sub
 parseExpr "*" = Right Mul
 parseExpr "/" = Right Div
+parseExpr "." = Right Dot
+parseExpr "=" = Right Equal
 parseExpr "dup"  = Right Dup  
 parseExpr "swap" = Right Swap 
 parseExpr "over" = Right Dup
 parseExpr "drop" = Right Drop
+parseExpr "emit" = Right Emit
 parseExpr "DUP" = Right Dup
 parseExpr "SWAP" = Right Swap
 parseExpr "OVER" = Right Over
 parseExpr "DROP" = Right Drop
-parseExpr any = error ("no matching expression: " ++ "'" ++ any ++ "'")
+parseExpr "CR" = Right Cr
+parseExpr "LF" = Right Lf
+parseExpr any = Left ("undefined expression: " ++ "'" ++ any ++ "'")
 
-parse :: [String] -> Compiler -> Either String Program
-parse [] (Compiler prog _) = Right prog
-parse (":":symbol:rest) (Compiler prog table) =
-  case parse exprs (Compiler [] table) of
-    Right defs ->  
-        parse next (Compiler ((Sym symbol defs) : prog) table)
-    Left err -> Left err
-  where
-    exprs = takeWhile (\x -> x /= ";") rest
-    next = tail (dropWhile (\x -> x /= ";") rest)
-parse (token:rest) (Compiler prog table) =
+parse :: [String] -> Program -> Table -> Either (String, Program, Table) (Program, Table)
+parse [] prog table = Right (prog, table)
+parse (":":symbol:rest) prog table =
+  case lookup symbol table of
+    Just _ -> Left ("duplicate name: " ++ "'" ++ symbol ++ "'", prog, table)
+    Nothing ->
+      case parse exprs [] table of
+        Left err -> Left err
+        Right (iexprs, itable) ->
+          parse next prog ((symbol, iexprs):itable) 
+      where
+        exprs = takeWhile (\x -> x /= ";") rest -- check for nested defs
+        next = tail (dropWhile (\x -> x /= ";") rest) -- fails on unfinished defs 
+parse (token:rest) prog table =
     case reads token :: [(Int, String)] of
-      [(lit, "")] -> parse rest (Compiler ((Lit lit) : prog) table)
+      [(lit, "")] -> parse rest ((Lit lit) : prog) table
       _ ->
         case parseExpr token of
-             Right expr ->
-               parse rest (Compiler (expr : prog) table)
-             Left err -> Left err
+             Right expr -> parse rest (expr : prog) table
+             Left err ->
+               case lookup token table of
+                 Just _ -> parse rest ((Sym token) : prog) table
+                 Nothing -> Left (err, prog, table)
 
-compile :: String -> Either String Compiler
-compile code =
-  case parse (words code) (Compiler [] []) of
-    Right prog ->
-      Right (Compiler prog [])
-    Left err ->
-      Left err
+parseTokens :: String -> Either (String, Program, Table) (Program, Table)
+parseTokens code =
+  case parse (words code) [] [] of
+    Right (prog, table) -> Right ((reverse prog), table)
+    Left e -> Left e
 
-type Stack = [Int]
-execute :: Compiler -> Either String Int 
-execute = undefined
+stackUnderflow :: Expr -> String
+stackUnderflow expr = "stack underflow: " ++ show expr
 
+eval :: Evaluator -> IO Evaluator
+eval state@(Evaluator [] _ _) = return state
+eval (Evaluator (expr:rest) stack table) =
+  case expr of
+    Lit lit -> eval (Evaluator rest (lit:stack) table)
+    Add -> binaryOp (+)
+    Sub -> binaryOp (-)
+    Mul -> binaryOp (*)
+    Div -> binaryOp div
+    Lf -> undefined -- todo
+    Cr -> undefined -- todo
+    Dot ->
+      case stack of
+        (x:xs) -> do
+          putStr (show x ++ " ")
+          eval (Evaluator rest xs table)
+        _ -> error $ stackUnderflow expr
+    Emit ->
+      case stack of
+        (x:xs) -> do
+          putChar (toEnum x :: Char)
+          eval (Evaluator rest xs table)
+        _ -> error $ stackUnderflow expr
+    Dup ->
+      case stack of
+        (x:xs) -> eval (Evaluator rest (x:x:xs) table)
+        _ -> error $ stackUnderflow expr
+    Swap ->
+      case stack of
+        (y:x:xs) -> eval (Evaluator rest (x:y:xs) table)
+        _ -> error $ stackUnderflow expr
+    Drop ->
+      case stack of
+        (_:xs) -> eval (Evaluator rest xs table)
+        _ -> error $ stackUnderflow expr
+    Over ->
+      case stack of
+        (y:x:xs) -> eval (Evaluator rest (x:y:x:xs) table)
+        _ -> error $ stackUnderflow expr
+    Equal ->
+      case stack of
+        (y:x:xs) ->
+          let res = if x == y then -1 else 0 
+          in eval (Evaluator rest (res:xs) table)
+        _ -> error $ stackUnderflow expr
+    Sym key ->
+      case lookup key table of
+        Just defs -> eval (Evaluator ((reverse defs) ++ rest) stack table)
+        Nothing -> error $ "undefined word: " ++ "'" ++ key ++ "'"
+  where
+    binaryOp f =
+      case stack of
+        (y:x:xs) -> eval (Evaluator rest (f x y : xs) table)
+        _ -> error $ "stack underflow binary operator: " ++ show expr
+
+progs :: [String]
+progs = [
+      "1",
+      "3 4 + 9 -",
+      "10 5 - 2 *",
+      "20 5 / 3 +",
+      "1 2 3 * -",
+      "5 2 10 /",
+      "1 2 3 +",
+      "1 + 3",
+      "1 2 + : defined 10 ; 1",
+      ": empty ;",
+      ": def1 1 ; : def2 2 ; : def3 3 ;  def1 def2 def3 def2 +",
+      ": f 1 ; f dup +",
+      ": r 5 ; : l 10 ; l r =",
+      ": l 5 ; : r l 5 + ; r 10 =",
+      ": l 10 ; : r dup l + ; 2 l * r =",
+      ": l 1 ; : r dup dup ; l r",
+      ": f 102 ; : o 111 ; : r 114 ; : t 116 ; : h 104 ; : out f emit o emit r emit t emit h emit ; out 10 emit"
+      ]
+        
 main :: IO ()
 main = do
-  let
-    prog1 = "3 4 +"        
-    prog2 = "10 5 - 2 *"   
-    prog3 = "20 5 / 3 +"   
-    prog4 = "1 2 3 * -"    
-    prog5 = "5 2 10 /"     
-    prog6 = "1 2 3 +"      
-    prog7 = "1 + 3"
-    prog8 = "1 2 + : defined 10 ; 1"
-    prog9 = "1 2 unknown"  
-
-  
-  putStrLn "--- Forth ---"
-  print $ compile prog1 
-  print $ compile prog1
-  print $ compile prog2
-  print $ compile prog3
-  print $ compile prog4
-  print $ compile prog5
-  print $ compile prog6
-  print $ compile prog7
-  print $ compile prog8
-  putStrLn "--------------------------------"
-
-  -- putStrLn "Enter a Forth sequence (e.g., 5 6 * 10 2 / -):"
-  -- input <- getLine
-  -- case parseAndRun input of
-  --   Right stack -> putStrLn $ "Final Stack: " ++ show stack
-  --   Left err    -> putStrLn $ "Evaluation Failed: " ++ err
-
+  let prog = (!!) progs 16
+  putStrLn "------------- Forth ------------"
+  putStrLn $ "source: " ++ "'" ++ prog ++ "'"
+  case parseTokens prog of
+    Left (err, p, t) -> do
+      putStrLn $ "program: " ++ show p
+      putStrLn $ "table: " ++ show t
+      putStrLn $ "error: " ++ err
+    Right (iprog, itable) -> do
+      putStr "stdout: "
+      (Evaluator program stack table) <- eval (Evaluator iprog [] itable)
+      putStrLn $ "table: " ++ show table
+      putStrLn $ "program: " ++ show iprog
+      putStrLn $ "stack: " ++ show stack
+  putStrLn "--------------------------------" 
